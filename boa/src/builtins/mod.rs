@@ -57,7 +57,7 @@ macro_rules! make_constructor_fn {
         );
         let call_fn = crate::builtins::function_object::Function::create_builtin(
             vec![],
-            crate::builtins::function_object::FunctionBody::BuiltIn($construct_body),
+            crate::builtins::function_object::FunctionBody::BuiltIn($call_body),
         );
 
         // Get reference to Function.prototype
