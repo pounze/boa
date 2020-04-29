@@ -509,7 +509,7 @@ pub fn replace(this: &mut Value, args: &[Value], ctx: &mut Interpreter) -> Resul
                 // Push the whole string being examined
                 results.push(to_value(primitive_val.to_string()));
 
-                let result = ctx.call(&replace_object, &this, results).unwrap();
+                let result = ctx.call(&replace_object, this, results).unwrap();
 
                 ctx.value_to_rust_string(&result)
             }

@@ -16,7 +16,7 @@ use crate::{
         array,
         object::{Object, ObjectInternalMethods, ObjectKind},
         property::Property,
-        value::{to_value, undefined, ResultValue, Value, ValueData},
+        value::{to_value, ResultValue, Value, ValueData},
     },
     environment::lexical_environment::{new_function_environment, Environment},
     exec::Executor,
@@ -138,10 +138,11 @@ impl Function {
         this: &mut Value, // represents a pointer to this function object wrapped in a GC (not a `this` JS object)
         args_list: &Vec<Value>,
         interpreter: &mut Interpreter,
+        this_obj: &mut Value,
     ) -> ResultValue {
         match self.kind {
             FunctionKind::BuiltIn => match &self.body {
-                FunctionBody::BuiltIn(func) => func(this, args_list, interpreter),
+                FunctionBody::BuiltIn(func) => func(this_obj, args_list, interpreter),
                 FunctionBody::Ordinary(_) => {
                     panic!("Builtin function should not have Ordinary Function body")
                 }
@@ -151,7 +152,7 @@ impl Function {
                 // <https://tc39.es/ecma262/#sec-prepareforordinarycall>
                 let local_env = new_function_environment(
                     this.clone(),
-                    undefined(),
+                    this_obj.clone(),
                     Some(self.environment.as_ref().unwrap().clone()),
                 );
 

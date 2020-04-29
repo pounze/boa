@@ -6,7 +6,7 @@ mod tests;
 use crate::{
     builtins::{
         array,
-        function::{create_unmapped_arguments_object, Function, RegularFunction},
+        function::{Function, RegularFunction},
         function_object::{Function as FunctionObject, FunctionBody, ThisMode},
         object::{Object, ObjectKind, INSTANCE_PROTOTYPE, PROTOTYPE},
         value::{from_value, to_value, ResultValue, Value, ValueData},
@@ -22,10 +22,7 @@ use crate::{
     },
 };
 use gc::{Gc, GcCell};
-use std::{
-    borrow::Borrow,
-    ops::{Deref, DerefMut},
-};
+use std::{borrow::Borrow, ops::Deref};
 
 /// An execution engine
 pub trait Executor {
@@ -121,7 +118,7 @@ impl Executor for Interpreter {
                     .get_field_slice(&val_field.borrow().to_string()))
             }
             Node::Call(ref callee, ref args) => {
-                let (this, func) = match callee.deref() {
+                let (mut this, func) = match callee.deref() {
                     Node::GetConstField(ref obj, ref field) => {
                         let mut obj = self.run(obj)?;
                         if obj.get_type() != "object" || obj.get_type() != "symbol" {
@@ -151,7 +148,7 @@ impl Executor for Interpreter {
                 }
 
                 // execute the function call itself
-                let fnct_result = self.call(&func, &this, v_args);
+                let fnct_result = self.call(&func, &mut this, v_args);
 
                 // unset the early return flag
                 self.is_return = false;
@@ -410,7 +407,7 @@ impl Executor for Interpreter {
                 for arg in args.iter() {
                     v_args.push(self.run(arg)?);
                 }
-                let this = ValueData::new_obj(None);
+                let mut this = ValueData::new_obj(None);
                 // Create a blank object, then set its __proto__ property to the [Constructor].prototype
                 this.borrow().set_internal_slot(
                     INSTANCE_PROTOTYPE,
@@ -422,7 +419,7 @@ impl Executor for Interpreter {
                         .construct
                         .as_ref()
                         .unwrap()
-                        .call(&mut func_object.clone(), &v_args, self),
+                        .construct(&mut func_object.clone(), &v_args, self, &mut this),
                     ValueData::Function(ref inner_func) => match inner_func.clone().into_inner() {
                         Function::NativeFunc(ref ntv) => {
                             let func = ntv.data;
@@ -605,91 +602,27 @@ impl Interpreter {
     }
 
     /// https://tc39.es/ecma262/#sec-call
-    pub(crate) fn call(&mut self, f: &Value, v: &Value, arguments_list: Vec<Value>) -> ResultValue {
+    pub(crate) fn call(
+        &mut self,
+        f: &Value,
+        this: &mut Value,
+        arguments_list: Vec<Value>,
+    ) -> ResultValue {
         // All functions should be objects, and eventually will be.
         // During this transition call will support both native functions and function objects
         match (*f).deref() {
-            ValueData::FunctionObj(func) => {
-                func.borrow_mut()
-                    .deref_mut()
-                    .call(&mut f.clone(), &arguments_list, self)
-            }
             ValueData::Object(ref obj) => match obj.borrow_mut().call {
                 Some(ref func) => {
-                    return func.call(&mut f.clone(), &arguments_list, self);
+                    return func.call(&mut f.clone(), &arguments_list, self, this);
                 }
                 None => panic!("Expected function"),
-            },
-            ValueData::Function(ref inner_func) => match *inner_func.deref().borrow() {
-                Function::NativeFunc(ref ntv) => {
-                    let func = ntv.data;
-                    func(v, &arguments_list, self)
-                }
-                Function::RegularFunc(ref data) => {
-                    let env = &mut self.realm.environment;
-                    // New target (second argument) is only needed for constructors, just pass undefined
-                    let undefined = Gc::new(ValueData::Undefined);
-                    env.push(new_function_environment(
-                        f.clone(),
-                        undefined,
-                        Some(env.get_current_environment_ref().clone()),
-                    ));
-                    for i in 0..data.args.len() {
-                        let arg_expr = data.args.get(i).expect("Could not get data argument");
-                        match arg_expr.deref() {
-                            Node::Local(ref name) => {
-                                let expr: &Value =
-                                    arguments_list.get(i).expect("Could not get argument");
-                                self.realm.environment.create_mutable_binding(
-                                    name.clone(),
-                                    false,
-                                    VariableScope::Function,
-                                );
-                                self.realm
-                                    .environment
-                                    .initialize_binding(name, expr.clone());
-                            }
-                            Node::Spread(ref expr) => {
-                                if let Node::Local(ref name) = expr.deref() {
-                                    let array = array::new_array(self)?;
-                                    array::add_to_array_object(&array, &arguments_list[i..])?;
-
-                                    self.realm.environment.create_mutable_binding(
-                                        name.clone(),
-                                        false,
-                                        VariableScope::Function,
-                                    );
-                                    self.realm.environment.initialize_binding(name, array);
-                                } else {
-                                    panic!("Unsupported function argument declaration")
-                                }
-                            }
-                            _ => panic!("Unsupported function argument declaration"),
-                        }
-                    }
-
-                    // Add arguments object
-                    let arguments_obj = create_unmapped_arguments_object(arguments_list);
-                    self.realm.environment.create_mutable_binding(
-                        "arguments".to_string(),
-                        false,
-                        VariableScope::Function,
-                    );
-                    self.realm
-                        .environment
-                        .initialize_binding("arguments", arguments_obj);
-
-                    let result = self.run(&data.node);
-                    self.realm.environment.pop();
-                    result
-                }
             },
             _ => Err(Gc::new(ValueData::Undefined)),
         }
     }
 
     /// https://tc39.es/ecma262/#sec-ordinarytoprimitive
-    fn ordinary_to_primitive(&mut self, o: &Value, hint: &str) -> Value {
+    fn ordinary_to_primitive(&mut self, o: &mut Value, hint: &str) -> Value {
         debug_assert!(o.get_type() == "object");
         debug_assert!(hint == "string" || hint == "number");
         let method_names: Vec<&str> = if hint == "string" {
@@ -700,7 +633,7 @@ impl Interpreter {
         for name in method_names.iter() {
             let method: Value = o.get_field_slice(name);
             if method.is_function() {
-                let result = self.call(&method, &o, vec![]);
+                let result = self.call(&method, o, vec![]);
                 match result {
                     Ok(val) => {
                         if val.is_object() {
@@ -721,7 +654,7 @@ impl Interpreter {
     /// The abstract operation ToPrimitive takes an input argument and an optional argument PreferredType.
     /// https://tc39.es/ecma262/#sec-toprimitive
     #[allow(clippy::wrong_self_convention)]
-    pub fn to_primitive(&mut self, input: &Value, preferred_type: Option<&str>) -> Value {
+    pub fn to_primitive(&mut self, input: &mut Value, preferred_type: Option<&str>) -> Value {
         let mut hint: &str;
         match (*input).deref() {
             ValueData::Object(_) => {
@@ -740,7 +673,7 @@ impl Interpreter {
                     hint = "number";
                 };
 
-                self.ordinary_to_primitive(&input, hint)
+                self.ordinary_to_primitive(input, hint)
             }
             _ => input.clone(),
         }
@@ -757,7 +690,7 @@ impl Interpreter {
             ValueData::Integer(ref num) => to_value(num.to_string()),
             ValueData::String(ref string) => to_value(string.clone()),
             ValueData::Object(_) => {
-                let prim_value = self.to_primitive(value, Some("string"));
+                let prim_value = self.to_primitive(&mut (value.clone()), Some("string"));
                 self.to_string(&prim_value)
             }
             _ => to_value("function(){...}"),
@@ -818,7 +751,7 @@ impl Interpreter {
             ValueData::Integer(ref num) => num.to_string(),
             ValueData::String(ref string) => string.clone(),
             ValueData::Object(_) => {
-                let prim_value = self.to_primitive(value, Some("string"));
+                let prim_value = self.to_primitive(&mut (value.clone()), Some("string"));
                 self.to_string(&prim_value).to_string()
             }
             _ => String::from("undefined"),
@@ -839,7 +772,7 @@ impl Interpreter {
             ValueData::Integer(num) => f64::from(num),
             ValueData::String(ref string) => string.parse::<f64>().unwrap(),
             ValueData::Object(_) => {
-                let prim_value = self.to_primitive(value, Some("number"));
+                let prim_value = self.to_primitive(&mut (value.clone()), Some("number"));
                 self.to_string(&prim_value)
                     .to_string()
                     .parse::<f64>()

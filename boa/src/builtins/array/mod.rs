@@ -260,7 +260,7 @@ pub fn for_each(this: &mut Value, args: &[Value], interpreter: &mut Interpreter)
     }
 
     let callback_arg = args.get(0).expect("Could not get `callbackFn` argument.");
-    let this_arg = args.get(1).cloned().unwrap_or_else(undefined);
+    let mut this_arg = args.get(1).cloned().unwrap_or_else(undefined);
 
     let length: i32 =
         from_value(this.get_field_slice("length")).expect("Could not get `length` property.");
@@ -269,7 +269,7 @@ pub fn for_each(this: &mut Value, args: &[Value], interpreter: &mut Interpreter)
         let element = this.get_field_slice(&i.to_string());
         let arguments = vec![element.clone(), to_value(i), this.clone()];
 
-        interpreter.call(callback_arg, &this_arg, arguments)?;
+        interpreter.call(callback_arg, &mut this_arg, arguments)?;
     }
 
     Ok(Gc::new(ValueData::Undefined))
@@ -493,7 +493,7 @@ pub fn every(this: &mut Value, args: &[Value], interpreter: &mut Interpreter) ->
         ));
     }
     let callback = &args[0];
-    let this_arg = if args.len() > 1 {
+    let mut this_arg = if args.len() > 1 {
         args[1].clone()
     } else {
         Gc::new(ValueData::Undefined)
@@ -504,7 +504,9 @@ pub fn every(this: &mut Value, args: &[Value], interpreter: &mut Interpreter) ->
     while i < len {
         let element = this.get_field_slice(&i.to_string());
         let arguments = vec![element.clone(), to_value(i), this.clone()];
-        let result = interpreter.call(callback, &this_arg, arguments)?.is_true();
+        let result = interpreter
+            .call(callback, &mut this_arg, arguments)?
+            .is_true();
         if !result {
             return Ok(to_value(false));
         }
@@ -533,7 +535,7 @@ pub fn map(this: &mut Value, args: &[Value], interpreter: &mut Interpreter) -> R
     }
 
     let callback = args.get(0).cloned().unwrap_or_else(undefined);
-    let this_val = args.get(1).cloned().unwrap_or_else(undefined);
+    let mut this_val = args.get(1).cloned().unwrap_or_else(undefined);
 
     let length: i32 =
         from_value(this.get_field_slice("length")).expect("Could not get `length` property.");
@@ -547,7 +549,7 @@ pub fn map(this: &mut Value, args: &[Value], interpreter: &mut Interpreter) -> R
             let args = vec![element, to_value(idx), new.clone()];
 
             interpreter
-                .call(&callback, &this_val, args)
+                .call(&callback, &mut this_val, args)
                 .unwrap_or_else(|_| undefined())
         })
         .collect::<Vec<Value>>();
@@ -685,7 +687,7 @@ pub fn find(this: &mut Value, args: &[Value], interpreter: &mut Interpreter) -> 
         ));
     }
     let callback = &args[0];
-    let this_arg = if args.len() > 1 {
+    let mut this_arg = if args.len() > 1 {
         args[1].clone()
     } else {
         Gc::new(ValueData::Undefined)
@@ -694,7 +696,7 @@ pub fn find(this: &mut Value, args: &[Value], interpreter: &mut Interpreter) -> 
     for i in 0..len {
         let element = this.get_field_slice(&i.to_string());
         let arguments = vec![element.clone(), to_value(i), this.clone()];
-        let result = interpreter.call(callback, &this_arg, arguments)?;
+        let result = interpreter.call(callback, &mut this_arg, arguments)?;
         if result.is_true() {
             return Ok(element);
         }
@@ -723,7 +725,7 @@ pub fn find_index(this: &mut Value, args: &[Value], interpreter: &mut Interprete
 
     let predicate_arg = args.get(0).expect("Could not get `predicate` argument.");
 
-    let this_arg = args
+    let mut this_arg = args
         .get(1)
         .cloned()
         .unwrap_or_else(|| Gc::new(ValueData::Undefined));
@@ -735,7 +737,7 @@ pub fn find_index(this: &mut Value, args: &[Value], interpreter: &mut Interprete
         let element = this.get_field_slice(&i.to_string());
         let arguments = vec![element.clone(), to_value(i), this.clone()];
 
-        let result = interpreter.call(predicate_arg, &this_arg, arguments)?;
+        let result = interpreter.call(predicate_arg, &mut this_arg, arguments)?;
 
         if result.is_true() {
             return Ok(Gc::new(ValueData::Rational(f64::from(i))));
@@ -886,7 +888,7 @@ pub fn filter(this: &mut Value, args: &[Value], interpreter: &mut Interpreter) -
     }
 
     let callback = args.get(0).cloned().unwrap_or_else(undefined);
-    let this_val = args.get(1).cloned().unwrap_or_else(undefined);
+    let mut this_val = args.get(1).cloned().unwrap_or_else(undefined);
 
     let length: i32 =
         from_value(this.get_field_slice("length")).expect("Could not get `length` property.");
@@ -900,7 +902,7 @@ pub fn filter(this: &mut Value, args: &[Value], interpreter: &mut Interpreter) -
             let args = vec![element.clone(), to_value(idx), new.clone()];
 
             let callback_result = interpreter
-                .call(&callback, &this_val, args)
+                .call(&callback, &mut this_val, args)
                 .unwrap_or_else(|_| undefined());
 
             if callback_result.is_true() {
@@ -936,7 +938,7 @@ pub fn some(this: &mut Value, args: &[Value], interpreter: &mut Interpreter) -> 
         ));
     }
     let callback = &args[0];
-    let this_arg = if args.len() > 1 {
+    let mut this_arg = if args.len() > 1 {
         args[1].clone()
     } else {
         Gc::new(ValueData::Undefined)
@@ -947,7 +949,9 @@ pub fn some(this: &mut Value, args: &[Value], interpreter: &mut Interpreter) -> 
     while i < len {
         let element = this.get_field_slice(&i.to_string());
         let arguments = vec![element.clone(), to_value(i), this.clone()];
-        let result = interpreter.call(callback, &this_arg, arguments)?.is_true();
+        let result = interpreter
+            .call(callback, &mut this_arg, arguments)?
+            .is_true();
         if result {
             return Ok(to_value(true));
         }
